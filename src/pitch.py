@@ -1,9 +1,10 @@
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
 
 from config import LABEL_FONT, PITCH_CONFIG
+from goal import PostTracker, detect_goal_in_frame, draw_black_goal
 
 
 def order_corners(points: np.ndarray) -> np.ndarray:
@@ -89,3 +90,54 @@ def overlay_pitch_info(frame: np.ndarray, corners: np.ndarray) -> None:
     labels = ("TL", "TR", "BR", "BL")
     for label, (x, y) in zip(labels, poly):
         cv2.putText(frame, label, (x + 5, y - 5), LABEL_FONT, 0.5, (0, 255, 0), 1)
+
+
+class PitchTracker:
+    """Handles pitch detection and tracking."""
+
+    def __init__(self, warp_dims: Tuple[int, int]):
+        self.warp_dims = warp_dims
+        self.H = np.eye(3, dtype=np.float32)
+        self.pitch_corners = None
+        self.post_tracker = PostTracker()
+        self.lk_parameters = dict(
+            winSize=(21, 21),
+            maxLevel=3,
+            criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 30, 0.01),
+        )
+        self.prev_gray = None
+
+    def initialize(self, frame: np.ndarray) -> np.ndarray:
+        """Initialize pitch tracking with first frame."""
+
+        warped = cv2.warpPerspective(frame, self.H, self.warp_dims)
+        initial_hsv = cv2.cvtColor(warped, cv2.COLOR_BGR2HSV)
+        init_corners = detect_pitch(initial_hsv)
+
+        if init_corners is None:
+            raise RuntimeError("Pitch not detected in first frame")
+
+        self.pitch_corners = init_corners.reshape(-1, 1, 2).astype(np.float32)
+        self.prev_gray = cv2.cvtColor(warped, cv2.COLOR_BGR2GRAY)
+        return warped
+
+    def update(
+        self, frame: np.ndarray, frame_idx: int
+    ) -> Tuple[np.ndarray, Optional[List], Optional[List]]:
+        """Update pitch tracking and detect goals."""
+
+        warped = cv2.warpPerspective(frame, self.H, self.warp_dims)
+        self.pitch_corners, current_gray = update_pitch_corners(
+            warped, self.pitch_corners, self.prev_gray, frame_idx, self.lk_parameters
+        )
+
+        bottom_gate_coords = detect_goal_in_frame(
+            warped, self.pitch_corners, self.post_tracker
+        )
+
+        upper_gate_coords = draw_black_goal(warped)
+        overlay_pitch_info(warped, self.pitch_corners)
+
+        self.prev_gray = current_gray
+
+        return warped, bottom_gate_coords, upper_gate_coords

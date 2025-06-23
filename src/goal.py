@@ -1,9 +1,9 @@
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 import cv2
 import numpy as np
 
-from config import GOAL_CONFIG
+from config import GOAL_CONFIG, GameState
 
 
 def get_bright_mask(hsv_frame: np.ndarray) -> np.ndarray:
@@ -166,3 +166,54 @@ def detect_goal_in_frame(
         cv2.rectangle(frame, goal_tl, goal_br, (255, 0, 255), 2)
         return goal_tl, goal_br
     return None
+
+
+class GoalDetector:
+    """Handles goal scoring logic."""
+
+    @staticmethod
+    def is_ball_in_goal(
+        ball_center: Tuple[int, int], goal_coords: List[Tuple[int, int]]
+    ) -> bool:
+        """Check if ball is inside goal area."""
+
+        if not goal_coords:
+            return False
+
+        cx, cy = ball_center
+        x1, y1 = goal_coords[0]
+        x2, y2 = goal_coords[1]
+
+        return x1 < cx < x2 and y1 < cy < y2
+
+    def update_goal_positions(
+        self,
+        game_state: GameState,
+        ball_center: Optional[Tuple[int, int]],
+        bottom_gate_coords,
+        upper_gate_coords,
+    ):
+        """Update ball position relative to goals."""
+        if ball_center:
+            game_state.missing_counter = 0
+
+            if self.is_ball_in_goal(ball_center, bottom_gate_coords):
+                game_state.ball_inside_bottom_goal = True
+
+            if self.is_ball_in_goal(ball_center, upper_gate_coords):
+                game_state.ball_inside_upper_goal = True
+
+        else:
+            game_state.missing_counter += 1
+
+    def check_for_goals(self, game_state: GameState):
+        """Check if a goal should be scored."""
+
+        if (
+            game_state.missing_counter > game_state.max_missing_frames
+            and game_state.goal_cooldown == 0
+        ):
+            if game_state.ball_inside_bottom_goal:
+                game_state.score_goal(1)
+            elif game_state.ball_inside_upper_goal:
+                game_state.score_goal(2)
